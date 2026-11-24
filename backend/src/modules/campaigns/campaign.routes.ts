@@ -26,6 +26,8 @@ const createCampaignSchema = z.object({
   subject: z.string().trim().min(1).max(255),
   body: z.string().trim().min(1),
   scheduledAt: z.coerce.date(),
+  minDelaySeconds: z.coerce.number().int().min(1).max(3600),
+  hourlyLimit: z.coerce.number().int().min(1).max(10000),
   recipients: z.array(
     z.object({
       email: z.string().trim().email().transform((v) => v.toLowerCase()),
@@ -33,7 +35,6 @@ const createCampaignSchema = z.object({
     })
   ).min(1).max(500),
 });
-
 // ==========================================
 // 1. CREATE CAMPAIGN
 // POST /api/campaigns
@@ -53,7 +54,7 @@ router.post("/", async (req, res) => {
       });
     }
 
-    const { name, subject, body, scheduledAt, recipients } = parsed.data;
+    const { name, subject, body, scheduledAt, minDelaySeconds, hourlyLimit, recipients } = parsed.data;
 
     if (scheduledAt.getTime() <= Date.now()) {
       return res.status(400).json({
@@ -89,10 +90,15 @@ router.post("/", async (req, res) => {
         },
       },
       create: {
-        userId,
-        email: senderEmail,
-      },
-      update: {},
+  userId,
+  email: senderEmail,
+  minDelaySeconds,
+  hourlyLimit,
+},
+update: {
+  minDelaySeconds,
+  hourlyLimit,
+},
     });
 
     if (!sender.isActive) {
@@ -278,7 +284,14 @@ router.get("/", async (req, res) => {
         id: campaign.id,
         name: campaign.name,
         subject: campaign.subject,
-        status: campaign.status,
+        status:
+  counts.sent === campaign.totalEmails && campaign.totalEmails > 0
+    ? "COMPLETED"
+    : counts.failed === campaign.totalEmails && campaign.totalEmails > 0
+      ? "FAILED"
+      : counts.processing > 0 || counts.sent > 0 || counts.queued > 0
+        ? "RUNNING"
+        : campaign.status,
         totalEmails: campaign.totalEmails,
         emailCount: campaign._count.emails,
         counts,

@@ -26,12 +26,10 @@ import {
 import { Toaster, toast } from "sonner";
 import "./App.css";
 
-// API configuration
 const API = axios.create({
   baseURL: "http://localhost:5000/api",
 });
 
-// Attach JWT to authenticated API requests.
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem("reachinbox_token");
 
@@ -73,6 +71,12 @@ type Recipient = {
 
 type Tab = "overview" | "campaigns" | "compose" | "sent" | "scheduled";
 
+function getDefaultScheduleTime() {
+  const date = new Date(Date.now() + 10 * 60 * 1000);
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 16);
+}
+
 function App() {
   // Authentication state
   const [token, setToken] = useState<string | null>(() =>
@@ -91,16 +95,22 @@ function App() {
   const [emails, setEmails] = useState<Email[]>([]);
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
+
+  // Campaign form state
   const [campaignName, setCampaignName] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [recipientsText, setRecipientsText] = useState("");
+
+  // Scheduling and rate-limit settings
+  const [scheduledAt, setScheduledAt] = useState(getDefaultScheduleTime);
+  const [minDelaySeconds, setMinDelaySeconds] = useState("5");
+  const [hourlyLimit, setHourlyLimit] = useState("100");
+
   const [sending, setSending] = useState(false);
 
   // Google authentication
-  const handleGoogleSuccess = async (
-    response: CredentialResponse
-  ) => {
+  const handleGoogleSuccess = async (response: CredentialResponse) => {
     if (!response.credential) {
       toast.error("Google authentication failed. Please try again.");
       return;
@@ -150,7 +160,7 @@ function App() {
     toast.success("You have been logged out.");
   };
 
-  // Load campaigns and emails from the backend.
+  // Load campaigns and emails
   const loadData = useCallback(async () => {
     if (!token) return;
 
@@ -197,7 +207,7 @@ function App() {
     }
   }, [token]);
 
-  // Load data after authentication.
+  // Load data after authentication
   useEffect(() => {
     if (token) {
       void loadData();
@@ -207,7 +217,7 @@ function App() {
     }
   }, [token, loadData]);
 
-  // Email statistics.
+  // Email statistics
   const sentEmails = emails.filter(
     (email) => email.status === "SENT"
   );
@@ -221,7 +231,7 @@ function App() {
     (email) => email.status === "FAILED"
   );
 
-  // Parse manually entered recipients.
+  // Parse manually entered recipients
   const parseRecipients = (): Recipient[] => {
     const parsed = recipientsText
       .split(/[\n,;]+/)
@@ -244,7 +254,7 @@ function App() {
       }
     }
 
-    // Remove duplicate email addresses.
+    // Remove duplicate email addresses
     return [
       ...new Map(
         result.map((recipient) => [
@@ -255,7 +265,7 @@ function App() {
     ];
   };
 
-  // Import recipients from CSV.
+  // Import recipients from CSV
   const handleCsv = (file?: File) => {
     if (!file) return;
 
@@ -311,7 +321,7 @@ function App() {
     });
   };
 
-  // Create a campaign.
+  // Create a campaign
   const createCampaign = async (
     event: FormEvent<HTMLFormElement>
   ) => {
@@ -331,6 +341,29 @@ function App() {
       return;
     }
 
+    if (new Date(scheduledAt).getTime() <= Date.now()) {
+      toast.error("Please select a future campaign start time.");
+      return;
+    }
+
+    if (
+      !Number.isInteger(Number(minDelaySeconds)) ||
+      Number(minDelaySeconds) < 1 ||
+      Number(minDelaySeconds) > 3600
+    ) {
+      toast.error("Delay must be between 1 and 3600 seconds.");
+      return;
+    }
+
+    if (
+      !Number.isInteger(Number(hourlyLimit)) ||
+      Number(hourlyLimit) < 1 ||
+      Number(hourlyLimit) > 10000
+    ) {
+      toast.error("Hourly limit must be between 1 and 10000.");
+      return;
+    }
+
     setSending(true);
 
     try {
@@ -338,7 +371,9 @@ function App() {
         name: campaignName.trim(),
         subject: subject.trim(),
         body: body.trim(),
-        scheduledAt: new Date(Date.now() + 60_000).toISOString(),
+        scheduledAt: new Date(scheduledAt).toISOString(),
+        minDelaySeconds: Number(minDelaySeconds),
+        hourlyLimit: Number(hourlyLimit),
         recipients,
       });
 
@@ -348,6 +383,7 @@ function App() {
       setSubject("");
       setBody("");
       setRecipientsText("");
+      setScheduledAt(getDefaultScheduleTime());
 
       await loadData();
       setTab("campaigns");
@@ -850,10 +886,69 @@ function App() {
                   <span>One address per line</span>
                 </div>
 
+                {/* Scheduling settings */}
+                <div className="form-divider" />
+
+                <div className="form-section-title">
+                  <Clock3 size={18} />
+
+                  <div>
+                    <h2>Scheduling & sending limits</h2>
+                    <p>
+                      Control when emails start and how quickly they are sent.
+                    </p>
+                  </div>
+                </div>
+
+                <label>
+                  Campaign start date and time
+
+                  <input
+                    type="datetime-local"
+                    value={scheduledAt}
+                    onChange={(event) =>
+                      setScheduledAt(event.target.value)
+                    }
+                    required
+                  />
+                </label>
+
+                <div className="form-grid">
+                  <label>
+                    Delay between emails (seconds)
+
+                    <input
+                      type="number"
+                      min="1"
+                      max="3600"
+                      value={minDelaySeconds}
+                      onChange={(event) =>
+                        setMinDelaySeconds(event.target.value)
+                      }
+                      required
+                    />
+                  </label>
+
+                  <label>
+                    Hourly sending limit
+
+                    <input
+                      type="number"
+                      min="1"
+                      max="10000"
+                      value={hourlyLimit}
+                      onChange={(event) =>
+                        setHourlyLimit(event.target.value)
+                      }
+                      required
+                    />
+                  </label>
+                </div>
+
                 <div className="submit-row">
                   <span className="schedule-note">
                     <Clock3 size={15} />
-                    Emails will be queued with a short initial delay.
+                    Emails will be queued according to your schedule.
                   </span>
 
                   <button
@@ -934,7 +1029,7 @@ function App() {
   );
 }
 
-// Dashboard statistic card.
+// Dashboard statistic card
 function StatCard({
   icon: Icon,
   label,
@@ -959,7 +1054,7 @@ function StatCard({
   );
 }
 
-// Email/campaign status indicator.
+// Email/campaign status indicator
 function StatusPill({ status }: { status: string }) {
   const value = status?.toUpperCase() || "UNKNOWN";
 
@@ -980,7 +1075,7 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
-// Campaign table.
+// Campaign table
 function CampaignTable({
   campaigns,
   formatDate,
@@ -1039,7 +1134,7 @@ function CampaignTable({
   );
 }
 
-// Email table.
+// Email table
 function EmailTable({
   emails,
   formatDate,
@@ -1098,7 +1193,7 @@ function EmailTable({
   );
 }
 
-// Empty table state.
+// Empty table state
 function EmptyState({ message }: { message: string }) {
   return (
     <div className="empty-state">
